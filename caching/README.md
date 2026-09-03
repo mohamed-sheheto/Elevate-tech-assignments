@@ -1,51 +1,29 @@
 # Outbox Pattern — NestJS
 
-NestJS + TypeORM + Redis demo for a `Product` resource that uses two reliability patterns sharing a single Redis hash `product:{id} -> {value, version, dirty}`.
+NestJS + TypeORM + Redis demo for `Product` using one Redis hash `product:{id} -> {value, version, dirty}` with two patterns.
 
-## Features
+## What is this?
 
-* **Product CRUD** — `POST /product`, `GET /product/:id` (cache-first), `PATCH /product/:id` via `src/product/`
-* **Transactional Outbox** — avoids persistence gap by committing `Product` + `Outbox` rows atomically and relaying to Redis asynchronously (`src/outbox/`)
-* **Versioned Write-Behind Cache with Lua** — avoids concurrency issues with atomic version checks and dirty-flag flush (`src/versioned-cache/`)
+* **Transactional Outbox** — fixes cache/DB divergence: `POST /product` saves `Product` + `Outbox(PENDING)` in one transaction (`src/product/product.service.ts:17`), cron every 30s (`src/outbox/outbox.service.ts:28`) pushes to Redis (`dirty=0`, `EXPIRE 60`), retries 5x.
+* **Versioned Write-Behind** — fast updates: `PATCH /product/:id` writes to Redis via Lua `SET_IF_NEWER` only if `new_version > current` (`src/versioned-cache/scripts/lua-scripts.ts:1`, `src/versioned-cache/versioned-cache.service.ts:26`, sets `dirty=1`), cron every 5s (`src/versioned-cache/flush.service.ts:18`) flushes `dirty=1` keys to Postgres with `version` guard and clears flag via Lua `CLEAR_DIRTY_IF_UNCHANGED`.
+* **Cache-first read** — `GET /product/:id` checks Redis first (`src/product/product.service.ts:35`), falls back to DB.
 
-## How It Works (Shallow)
+`dirty=0` = persisted, `dirty=1` = needs flush. `version` (`src/product/entities/product.entity.ts:17`) decides winner.
 
-**Transactional Outbox:** `createUsingOutbox` saves the product and an `Outbox` entry (`PENDING`) in one transaction. A cron job (`EVERY_30_SECONDS`) picks `PENDING` entries, writes them to Redis (`dirty=0`, `EXPIRE 60s`), and marks them `PROCESSED`. Retries up to 5 times else `FAILED`, skipping stale versions if Redis already has a newer `version`.
+## Stack
 
-**Versioned Cache:** Updates use a Lua script `SET_IF_NEWER` that only writes to Redis if `new_version > current_version`, setting `dirty=1`. Reads are cache-first. A flush job (`EVERY_5_SECONDS`) finds `dirty=1` keys, upserts to Postgres with a `version` guard, and clears the flag via Lua `CLEAR_DIRTY_IF_UNCHANGED` only if the version hasn't changed concurrently.
+NestJS 11, TypeORM, Postgres, Redis (`ioredis` + `@keyv/redis`), `@nestjs/schedule`.
 
-Redis key is unified — `dirty=0` means already persisted (outbox path), `dirty=1` means needs flush (write-behind path).
+## Run
 
-## Tech Stack
-
-NestJS 11, TypeORM, PostgreSQL, Redis (`ioredis` + `@keyv/redis`), `@nestjs/schedule`.
-
-## Prerequisites
-
-* Node.js 20+, `pnpm` only
-* PostgreSQL `localhost:5432` (`postgres`/`112233`/`postgres`) and Redis `localhost:6379` — override with `REDIS_URL` / `PORT` (`src/app.module.ts`)
-
-No migrations needed — `synchronize: true` + `autoLoadEntities: true`.
-
-## Setup & Run
-
-```bash
-pnpm install
-pnpm run start:dev      # watch mode
-pnpm run start:debug    # watch + debug
-pnpm run build          # nest build
-pnpm run start:prod     # node dist/main
-```
-
-App on `http://localhost:3000` with global `ValidationPipe { whitelist, forbidNonWhitelisted }`.
+* Requires Node 20+, `pnpm`, Postgres `localhost:5432` (`postgres`/`112233`) and Redis `localhost:6379` (override `REDIS_URL` in `src/app.module.ts`). `synchronize:true`, no migrations.
+* `pnpm install && pnpm run start:dev` → `http://localhost:3000`
 
 ## API
 
-| Method | Route | Description |
-|---|---|---|
-| `POST` | `/product` | Create via outbox — `{"name","price","stock"}` |
-| `GET` | `/product/:id` | Cache-first read |
-| `PATCH` | `/product/:id` | Versioned write-behind update |
+| `POST` | `/product` | `{"name","price","stock"}` |
+| `GET` | `/product/:id` | cache-first |
+| `PATCH` | `/product/:id` | write-behind |
 
 ```bash
 curl -X POST http://localhost:3000/product -H "Content-Type: application/json" -d '{"name":"Widget","price":99.99,"stock":100}'
@@ -53,27 +31,10 @@ curl http://localhost:3000/product/<id>
 curl -X PATCH http://localhost:3000/product/<id> -H "Content-Type: application/json" -d '{"price":79.99}'
 ```
 
-## Verify
-
-```bash
-pnpm run lint              # eslint --fix
-pnpm run format            # prettier
-pnpm exec tsc --noEmit     # typecheck (module:nodenext)
-pnpm test                  # jest src/**/*.spec.ts
-pnpm run build             # must pass before start:prod
-```
-
-Tests need live Postgres + Redis.
-
-## Project Structure
+## Structure
 
 ```
-src/main.ts, src/app.module.ts
-src/product/        # controller, service, entity (@VersionColumn), dto
-src/outbox/         # entity (status/retry/version), service (cron 30s)
+src/product/        # controller, service, entity (@VersionColumn)
+src/outbox/         # entity, service (cron 30s)
 src/versioned-cache/# service (Lua), flush service (cron 5s), lua-scripts.ts
 ```
-
-## License
-
-MIT
