@@ -1,0 +1,23 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "lsp": {
+    "custom-typescript": {
+      "command": [
+        "typescript-language-server",
+        "--stdio"
+      ],
+      "extensions": [
+        ".ts",
+        ".tsx"
+      ],
+      "env": {
+        "TSS_LOG": "-level verbose",
+      },
+      "initialization": {
+        "preferences": {
+          "importModuleSpecifierPreference": "relative",
+        },
+      },
+    },
+  },
+}
