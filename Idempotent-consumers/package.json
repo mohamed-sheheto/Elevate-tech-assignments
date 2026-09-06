@@ -1,0 +1,28 @@
+{
+  "name": "idempotent-consumer",
+  "version": "1.0.0",
+  "description": "",
+  "license": "ISC",
+  "author": "",
+  "type": "module",
+  "main": "dist/server.js",
+  "scripts": {
+    "start:server": "tsx src/server.ts",
+    "start:consumer": "tsx src/consumer.ts",
+    "build": "tsc -p tsconfig.json",
+    "docker:up": "docker-compose up -d",
+    "docker:down": "docker-compose down"
+  },
+  "dependencies": {
+    "@types/amqplib": "^0.10.8",
+    "amqplib": "^2.0.1",
+    "express": "^5.2.1",
+    "ioredis": "^6.0.0",
+    "tsx": "^4.23.13"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.4.1",
+    "typescript": "^7.0.2"
+  }
+}
